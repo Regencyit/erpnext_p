@@ -89,10 +89,6 @@ frappe.ui.form.on('Production Plan', {
 			frm.trigger("show_progress");
 
 			if (frm.doc.status !== "Completed") {
-				frm.add_custom_button(__("Work Order Tree"), ()=> {
-					frappe.set_route('Tree', 'Work Order', {production_plan: frm.doc.name});
-				}, __('View'));
-
 				frm.add_custom_button(__("Production Plan Summary"), ()=> {
 					frappe.set_route('query-report', 'Production Plan Summary', {production_plan: frm.doc.name});
 				}, __('View'));
@@ -309,6 +305,8 @@ frappe.ui.form.on('Production Plan', {
 			frappe.throw(__("Select the Warehouse"));
 		}
 
+		frm.set_value("consider_minimum_order_qty", 0);
+
 		if (frm.doc.ignore_existing_ordered_qty) {
 			frm.events.get_items_for_material_requests(frm);
 		} else {
@@ -475,6 +473,15 @@ frappe.ui.form.on("Material Request Plan Item", {
 					}
 				}
 			})
+		}
+	},
+
+	material_request_type(frm, cdt, cdn) {
+		let row = locals[cdt][cdn];
+
+		if (row.from_warehouse &&
+			row.material_request_type !== "Material Transfer") {
+				frappe.model.set_value(cdt, cdn, 'from_warehouse', '');
 		}
 	}
 });

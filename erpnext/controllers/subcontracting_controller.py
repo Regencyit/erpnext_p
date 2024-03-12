@@ -433,8 +433,11 @@ class SubcontractingController(StockController):
 					self.__set_batch_no_as_per_qty(item_row, new_rm_obj, batch_no, batch_qty)
 					self.available_materials[key]["batch_no"][batch_no] = 0
 
-			if abs(qty) > 0 and not new_rm_obj:
+			if new_rm_obj:
+				self.remove(rm_obj)
+			elif abs(qty) > 0:
 				self.__set_consumed_qty(rm_obj, qty)
+
 		else:
 			self.__set_consumed_qty(rm_obj, qty, bom_item.required_qty or qty)
 			self.__set_serial_nos(item_row, rm_obj)
@@ -525,6 +528,10 @@ class SubcontractingController(StockController):
 						(row.item_code, row.get(self.subcontract_data.order_field))
 					] -= row.qty
 
+	def __reset_idx(self):
+		for idx, item in enumerate(self.get(self.raw_material_table)):
+			item.idx = idx + 1
+
 	def __prepare_supplied_items(self):
 		self.initialized_fields()
 		self.__get_subcontract_orders()
@@ -532,6 +539,7 @@ class SubcontractingController(StockController):
 		self.get_available_materials()
 		self.__remove_changed_rows()
 		self.__set_supplied_items()
+		self.__reset_idx()
 
 	def __validate_batch_no(self, row, key):
 		if row.get("batch_no") and row.get("batch_no") not in self.__transferred_items.get(key).get(
@@ -655,7 +663,7 @@ class SubcontractingController(StockController):
 						{
 							"item_code": item.rm_item_code,
 							"warehouse": self.supplier_warehouse,
-							"actual_qty": -1 * flt(item.consumed_qty),
+							"actual_qty": -1 * flt(item.consumed_qty, item.precision("consumed_qty")),
 							"dependant_sle_voucher_detail_no": item.reference_name,
 						},
 					)
@@ -788,6 +796,23 @@ class SubcontractingController(StockController):
 				self._sub_contracted_items = [item.name for item in items]
 
 		return self._sub_contracted_items
+
+	def update_requested_qty(self):
+		material_request_map = {}
+		for d in self.get("items"):
+			if d.material_request_item:
+				material_request_map.setdefault(d.material_request, []).append(d.material_request_item)
+
+		for mr, mr_item_rows in material_request_map.items():
+			if mr and mr_item_rows:
+				mr_obj = frappe.get_doc("Material Request", mr)
+
+				if mr_obj.status in ["Stopped", "Cancelled"]:
+					frappe.throw(
+						_("Material Request {0} is cancelled or stopped").format(mr), frappe.InvalidStatusError
+					)
+
+				mr_obj.update_requested_qty(mr_item_rows)
 
 
 def get_item_details(items):

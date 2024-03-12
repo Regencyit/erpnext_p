@@ -2,6 +2,8 @@
 # For license information, please see license.txt
 
 
+import collections
+
 import frappe
 from frappe import _
 from frappe.query_builder.functions import IfNull, Sum
@@ -55,6 +57,7 @@ class POSInvoice(SalesInvoice):
 		self.validate_payment_amount()
 		self.validate_loyalty_transaction()
 		self.validate_company_with_pos_company()
+		self.validate_duplicate_serial_no()
 		if self.coupon_code:
 			from erpnext.accounts.doctype.pricing_rule.utils import validate_coupon_code
 
@@ -154,6 +157,18 @@ class POSInvoice(SalesInvoice):
 				).format(item.idx, bold_invalid_serial_nos),
 				title=_("Item Unavailable"),
 			)
+
+	def validate_duplicate_serial_no(self):
+		serial_nos = []
+
+		for row in self.get("items"):
+			if row.serial_no:
+				serial_nos = row.serial_no.split("\n")
+
+		if serial_nos:
+			for key, value in collections.Counter(serial_nos).items():
+				if value > 1:
+					frappe.throw(_("Duplicate Serial No {0} found").format("key"))
 
 	def validate_pos_reserved_batch_qty(self, item):
 		filters = {"item_code": item.item_code, "warehouse": item.warehouse, "batch_no": item.batch_no}
@@ -503,7 +518,7 @@ class POSInvoice(SalesInvoice):
 				selling_price_list = (
 					customer_price_list or customer_group_price_list or profile.get("selling_price_list")
 				)
-				if customer_currency != profile.get("currency"):
+				if customer_currency and customer_currency != profile.get("currency"):
 					self.set("currency", customer_currency)
 
 			else:
@@ -644,7 +659,7 @@ def get_stock_availability(item_code, warehouse):
 		return bin_qty - pos_sales_qty, is_stock_item
 	else:
 		is_stock_item = True
-		if frappe.db.exists("Product Bundle", item_code):
+		if frappe.db.exists("Product Bundle", {"name": item_code, "disabled": 0}):
 			return get_bundle_availability(item_code, warehouse), is_stock_item
 		else:
 			is_stock_item = False
@@ -661,7 +676,7 @@ def get_bundle_availability(bundle_item_code, warehouse):
 		item_pos_reserved_qty = get_pos_reserved_qty(item.item_code, warehouse)
 		available_qty = item_bin_qty - item_pos_reserved_qty
 
-		max_available_bundles = available_qty / item.stock_qty
+		max_available_bundles = available_qty / item.qty
 		if bundle_bin_qty > max_available_bundles and frappe.get_value(
 			"Item", item.item_code, "is_stock_item"
 		):
@@ -690,7 +705,7 @@ def get_pos_reserved_qty(item_code, warehouse):
 	reserved_qty = (
 		frappe.qb.from_(p_inv)
 		.from_(p_item)
-		.select(Sum(p_item.qty).as_("qty"))
+		.select(Sum(p_item.stock_qty).as_("stock_qty"))
 		.where(
 			(p_inv.name == p_item.parent)
 			& (IfNull(p_inv.consolidated_invoice, "") == "")
@@ -701,7 +716,7 @@ def get_pos_reserved_qty(item_code, warehouse):
 		)
 	).run(as_dict=True)
 
-	return reserved_qty[0].qty or 0 if reserved_qty else 0
+	return flt(reserved_qty[0].stock_qty) if reserved_qty else 0
 
 
 @frappe.whitelist()
